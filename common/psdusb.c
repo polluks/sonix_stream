@@ -141,7 +141,13 @@ void sonix_usb_exit(void)
 
 ULONG sonix_usb_now_us(void)
 {
-	struct timeVal tv;
+	/*
+	 * Spelled the AmigaOS way on purpose.  SDK 3.20 and up renamed the
+	 * structure to TimeVal and kept a "timeval" alias for compatibility, so
+	 * this name is the only one that works on both an old and a new SDK.
+	 */
+
+	struct timeval tv;
 
 	if (!sonix_timerbase) return 0;
 
