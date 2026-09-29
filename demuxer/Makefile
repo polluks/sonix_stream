@@ -38,7 +38,7 @@ $(OUTPUT): $(OUTPUT).db
 	$(STRIP) $(OUTPUT).db -o $(OUTPUT)
 
 recognize.db: recognize.c class_version.h sonix.demuxer.h
-	ppc-morphos-gcc -s -O2 -nostdlib -o recognize.db recognize.c -labox
+	ppc-morphos-gcc -noixemul -s -O2 -nostdlib -o recognize.db recognize.c -labox
 
 recognize: recognize.db
 	ppc-morphos-objcopy -R .comment recognize.db recognize

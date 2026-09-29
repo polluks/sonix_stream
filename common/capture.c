@@ -15,17 +15,24 @@
 #include "psdusb.h"
 
 /*
- * USB control transfers, the literal values come from the original driver.
- * They are class requests, request 0x00 reads a controller register and
- * request 0x08 writes one, with the register number in wValue.
+ * USB control transfers.  The literal values come from the original driver:
+ * request 0x00 reads a controller register and request 0x08 writes one, with
+ * the register number in wValue.
  */
 
-#define SNX_DIR_OUT           0x40
-#define SNX_DIR_IN            0x80
-#define SNX_TYPE_CLASS        0x01
+/*
+ * bmRequestType, also from the original driver: a vendor request directed at
+ * the device, 0xc1 to read and 0x41 to write.  The three parts are the
+ * direction, the vendor type and the device recipient.
+ */
 
-#define SNX_CTRL_READ         (SNX_DIR_IN  | SNX_TYPE_CLASS)  /* 0xc1 */
-#define SNX_CTRL_WRITE        (SNX_DIR_OUT | SNX_TYPE_CLASS)  /* 0x41 */
+#define SNX_DIR_OUT           0x00
+#define SNX_DIR_IN            0x80
+#define SNX_TYPE_VENDOR       0x40
+#define SNX_RECIP_DEVICE      0x01
+
+#define SNX_CTRL_READ         (SNX_DIR_IN  | SNX_TYPE_VENDOR | SNX_RECIP_DEVICE)  /* 0xc1 */
+#define SNX_CTRL_WRITE        (SNX_DIR_OUT | SNX_TYPE_VENDOR | SNX_RECIP_DEVICE)  /* 0x41 */
 
 #define SNX_REQ_READ          0x00
 #define SNX_REQ_WRITE         0x08
@@ -71,7 +78,7 @@
 
 /* PAS106B and TAS5110C1B register defaults, 352x288. */
 
-static const UBYTE pas106b_init[][2] =
+static const UBYTE pas106b_regs[][2] =
 {
 	{SNX_REG_SENSOR_CTRL, 0x00},
 	{0x10, 0x00},              /* red and blue gain  */
@@ -292,7 +299,7 @@ static LONG i2c_read(struct SonixCam *cam, UBYTE address)
 	if (reg_write_buf(cam, SNX_REG_I2C, buf, 8) < 0) err = -1;
 	if (i2c_wait(cam) < 0) err = -1;
 
-	if (sonix_usb_control(cam->sc_Usb, SNX_CTRL_READ, SNX_REQ_SETUP,
+	if (sonix_usb_control(cam->sc_Usb, SNX_CTRL_READ, SNX_REQ_READ,
 	                      SNX_REG_I2C_RESULT, 0, buf, 5) < 0) err = -1;
 	if (i2c_error(cam) < 0) err = -1;
 
@@ -393,9 +400,9 @@ static LONG pas106b_init(struct SonixCam *cam)
 	ULONG i;
 	LONG err = 0;
 
-	for (i = 0; i < sizeof(pas106b_init) / 2; i++)
+	for (i = 0; i < sizeof(pas106b_regs) / 2; i++)
 	{
-		if (reg_write(cam, pas106b_init[i][0], pas106b_init[i][1]) < 0) err = -1;
+		if (reg_write(cam, pas106b_regs[i][0], pas106b_regs[i][1]) < 0) err = -1;
 	}
 
 	for (i = 0; i < sizeof(pas106b_sensor_init) / 2; i++)
@@ -476,8 +483,8 @@ struct SonixCam *sonix_cam_open(UWORD vendor, UWORD product,
 
 	if (!cam->sc_Usb)
 	{
-		FreeMem(cam);
-		if (error) *error = SONIX_ERR_DEVICE;
+		FreeMem(cam, sizeof(struct SonixCam));
+		if (error) *error = SONIX_ERR_NO_DEVICE;
 		return NULL;
 	}
 
@@ -505,7 +512,7 @@ struct SonixCam *sonix_cam_open(UWORD vendor, UWORD product,
 	if (err != SONIX_OK)
 	{
 		sonix_usb_close(cam->sc_Usb);
-		FreeMem(cam);
+		FreeMem(cam, sizeof(struct SonixCam));
 		if (error) *error = err;
 		return NULL;
 	}
@@ -523,7 +530,7 @@ void sonix_cam_close(struct SonixCam *cam)
 
 	video_enable(cam, FALSE);
 	sonix_usb_close(cam->sc_Usb);
-	FreeMem(cam);
+	FreeMem(cam, sizeof(struct SonixCam));
 }
 
 /*

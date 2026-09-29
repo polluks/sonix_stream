@@ -83,7 +83,15 @@ static BOOL release_hook_ready;
  * MorphOS has no MakeHook() in plain C, build the hook by hand.  HookEntry
  * dispatches to h_SubEntry with (object, message), h_Data is what that gives
  * back to the subentry as its first argument.
+ *
+ * HookEntry is the SDK's assembly shim in exec/hooks.h, and that header only
+ * declares it for assembly, so C has to declare it itself.  The call signature
+ * is a call the shim makes, never one made from here, hence the void.
  */
+
+#ifndef HookEntry
+extern void HookEntry(void);
+#endif
 
 static void init_hook(struct Hook *hook, APTR data)
 {
@@ -133,7 +141,7 @@ void sonix_usb_exit(void)
 
 ULONG sonix_usb_now_us(void)
 {
-	struct TimeVal tv;
+	struct timeVal tv;
 
 	if (!sonix_timerbase) return 0;
 

@@ -164,7 +164,7 @@ void CloseCamera(struct ObjData *d);
 BOOL BuildHeader(struct ObjData *d);
 BOOL CaptureFrame(Object *obj, struct ObjData *d);
 BOOL PrepareFrame(Class *cl, Object *obj, struct ObjData *d);
-BOOL SetFormat(struct ObjData *d, ULONG format);
+BOOL SetFormat(Object *obj, struct ObjData *d, ULONG format);
 ULONG ParseSelector(STRPTR selector, UWORD *vendor, UWORD *product);
 BOOL hex_value(UBYTE c, UWORD *value);
 
@@ -797,8 +797,11 @@ BOOL PrepareFrame(Class *cl, Object *obj, struct ObjData *d)
 /// Switches between SNXF_GRAY8 and SNXF_RGB24.  The frame buffer is the only
 /// thing which depends on it, so it is reallocated and the stream starts
 /// over; the camera itself does not care and is left alone.
+///
+/// The object is passed in only because seterr() needs it, and this is not a
+/// method.
 
-BOOL SetFormat(struct ObjData *d, ULONG format)
+BOOL SetFormat(Object *obj, struct ObjData *d, ULONG format)
 {
 	ULONG pixelLen, len;
 	UBYTE *output;
@@ -895,7 +898,7 @@ LONG Get(Class *cl, Object *obj, struct opGet *msg)
 			return TRUE;
 
 		case MMA_Sonix_SensorName:
-			*msg->opg_Storage = (LONG)(d->od_Cam ? sonix_cam_sensor_name(d->od_Cam) : "unknown");
+			*msg->opg_Storage = (LONG)(CONST_STRPTR)(d->od_Cam ? sonix_cam_sensor_name(d->od_Cam) : "unknown");
 			return TRUE;
 
 		case MMA_Sonix_Red:
@@ -987,7 +990,7 @@ LONG Set(Class *cl, Object *obj, struct opSet *msg)
 			break;
 
 			case MMA_Sonix_Format:
-				if (!SetFormat(d, (ULONG)value)) return FALSE;
+				if (!SetFormat(obj, d, (ULONG)value)) return FALSE;
 				done = TRUE;
 			break;
 
@@ -1136,7 +1139,7 @@ LONG Peek(Class *cl, Object *obj, struct mmopData *msg)
 
 LONG Restore(Class *cl, Object *obj, Msg msg)
 {
-	msg = msg;
+	cl = cl; obj = obj; msg = msg;
 	return TRUE;
 }
 
@@ -1173,7 +1176,7 @@ LONG Setup(Class *cl, Object *obj, struct mmopPort *msg)
 
 LONG Seek(Class *cl, Object *obj, struct mmopSeek *msg)
 {
-	msg = msg;
+	cl = cl; obj = obj; msg = msg;
 	seterr(MMERR_NOT_SEEKABLE);
 	return FALSE;
 }
