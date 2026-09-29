@@ -1,0 +1,334 @@
+TABLE OF CONTENTS
+
+sonix.stream/--background--
+sonix.stream/MMA_Sonix_Blue
+sonix.stream/MMA_Sonix_Brightness
+sonix.stream/MMA_Sonix_Contrast
+sonix.stream/MMA_Sonix_Format
+sonix.stream/MMA_Sonix_Gain
+sonix.stream/MMA_Sonix_Green
+sonix.stream/MMA_Sonix_ProductID
+sonix.stream/MMA_Sonix_ProductName
+sonix.stream/MMA_Sonix_Red
+sonix.stream/MMA_Sonix_Sensor
+sonix.stream/MMA_Sonix_SensorName
+sonix.stream/MMA_Sonix_VendorID
+sonix.stream/MMM_Peek
+sonix.stream/MMM_Pull
+sonix.stream/MMM_Restore
+sonix.stream/--background--
+
+ DESCRIPTION
+   A Reggae source class for Sonix sn9c102 based USB webcams, that is the
+   Sweex 100K, the Macally IceCam, the Trust SpaceCam and friends, reached
+   through poseidon.library. The object is an MMCLASS_STREAM with a single
+   output port 0 carrying MMF_STREAM, so it has to be followed by a
+   demultiplexer; the one shipped with it is sonix.demuxer, which turns the
+   framed byte stream into MMF_VIDEO_RGB24 or MMF_VIDEO_GRAY8 pictures.
+
+   The camera is claimed on MMM_Setup(), never on OM_NEW, so an application
+   can build the whole pipeline before it touches the hardware, and only
+   MMM_Setup() reports a camera which is not there.
+
+   The data on port 0 is described by sonixwire.h: one SnxStreamHeader
+   followed by any number of SnxFrameHeader plus picture pairs, all fields
+   big endian. The stream header goes out in front of the first frame and
+   tells the demuxer the geometry, the pixel format, the USB ids of the
+   camera which was claimed and the sensor behind the controller. Every
+   frame behind it is a SnxFrameHeader followed by one complete picture,
+   uncompressed, so a decoder behind the demuxer gets the picture as it came
+   out of the sensor.
+
+   Pictures are 352x288, the only mode this controller is driven in. The
+   camera delivers an interleaved Bayer pattern, which is either handed over
+   as it is, as SNXF_GRAY8, or interpolated into packed RGB24, as
+   SNXF_RGB24.
+
+   The stream never ends by itself. MMM_Pull blocks in the USB transfer
+   until the next frame has been read, and it only fails when the camera is
+   unplugged or stops answering, which comes back as MMERR_IO_ERROR.
+
+ NEW ATTRIBUTES
+   Attributes applicability:
+     I - may be set at creation time.
+     S - may be set on an existing object.
+     G - may be get from an object.
+     P - may be set for an object's port.
+     Q - may be queried from an object's port.
+
+   MMA_Sonix_VendorID    (V1)     [I.S.G], UWORD
+   MMA_Sonix_ProductID   (V1)     [I.S.G], UWORD
+   MMA_Sonix_Format      (V1)     [I.S.G], ULONG
+   MMA_Sonix_ProductName (V1)     [..S.G], STRPTR
+   MMA_Sonix_Sensor      (V1)     [..S.G], ULONG
+   MMA_Sonix_SensorName  (V1)     [..S.G], STRPTR
+   MMA_Sonix_Red         (V1)     [..S.G], LONG
+   MMA_Sonix_Green       (V1)     [..S.G], LONG
+   MMA_Sonix_Blue        (V1)     [..S.G], LONG
+   MMA_Sonix_Gain        (V1)     [..S.G], LONG
+   MMA_Sonix_Brightness  (V1)     [..S.G], LONG
+   MMA_Sonix_Contrast    (V1)     [..S.G], LONG
+
+ NEW METHODS
+   MMM_Pull(port, buffer, length)  (V1)
+   MMM_Peek(port, buffer, length)  (V1)
+   MMM_Restore()  (V1)
+
+ HISTORY
+   1.0 (29.09.2026)
+   - Initial revision.
+
+sonix.stream/MMA_Sonix_Blue
+
+ NAME
+   MMA_Sonix_Blue (V1) [..S.G], LONG
+
+ FUNCTION
+   Blue gain of the sensor, 0 to 31 on the scale of the original driver; out
+   of range values are clamped. A PAS106B has a register for it and the
+   value is read back from the camera. A TAS5110C1B has none, so the value
+   is remembered and sent to the bridge register 0x10, which it shares with
+   red. Can be set while the stream is running and is ignored when the
+   camera is not open yet.
+
+sonix.stream/MMA_Sonix_Brightness
+
+ NAME
+   MMA_Sonix_Brightness (V1) [..S.G], LONG
+
+ FUNCTION
+   Brightness of the sensor, 0 to 31; out of range values are clamped. The
+   sensor register counts the other way round, the value sent to it is 0x1f
+   minus this attribute. Only a PAS106B implements it: with a TAS5110C1B the
+   call does nothing and the value is reported as 0. Can be set while the
+   stream is running and is ignored when the camera is not open yet.
+
+sonix.stream/MMA_Sonix_Contrast
+
+ NAME
+   MMA_Sonix_Contrast (V1) [..S.G], LONG
+
+ FUNCTION
+   Contrast of the sensor, 0 to 31; out of range values are clamped. Only a
+   PAS106B implements it: with a TAS5110C1B the call does nothing and the
+   value is reported as 0. Can be set while the stream is running and is
+   ignored when the camera is not open yet.
+
+sonix.stream/MMA_Sonix_Format
+
+ NAME
+   MMA_Sonix_Format (V1) [I.S.G], ULONG
+
+ FUNCTION
+   Pixel format of the frame data, one of SNXF_GRAY8 and SNXF_RGB24. The
+   default is SNXF_RGB24, which interpolates the Bayer pattern the camera
+   delivers into packed RGB24. SNXF_GRAY8 hands the pattern over as it is,
+   which needs no interpolation and is about three times faster, at the
+   price of colour. Changing the format reallocates the frame buffer and
+   starts the stream over, so the SnxStreamHeader is sent again and the
+   demuxer behind the object follows. Any other value is refused with
+   MMERR_WRONG_ARGUMENTS.
+
+ NOTES
+   The value is a SNXF_* constant of sonixwire.h, not a Reggae MMF_* format.
+   The format which carries the pictures over the demuxer follows from it:
+   MMF_VIDEO_RGB24 for SNXF_RGB24 and MMF_VIDEO_GRAY8 for SNXF_GRAY8.
+
+sonix.stream/MMA_Sonix_Gain
+
+ NAME
+   MMA_Sonix_Gain (V1) [..S.G], LONG
+
+ FUNCTION
+   Global gain of the sensor, 0 to 255 on the scale of the original driver;
+   out of range values are clamped. Only a PAS106B implements it and only
+   the top five bits of the value reach the camera, so what is read back
+   afterwards is the setting divided by 8. With a TAS5110C1B the call does
+   nothing and the value is reported as 15. Can be set while the stream is
+   running and is ignored when the camera is not open yet.
+
+sonix.stream/MMA_Sonix_Green
+
+ NAME
+   MMA_Sonix_Green (V1) [..S.G], LONG
+
+ FUNCTION
+   Green gain of the sensor, 0 to 31 on the scale of the original driver;
+   out of range values are clamped. A PAS106B has two registers for it, both
+   are written, and the value is read back from the camera. A TAS5110C1B has
+   none, so the value is remembered and sent to the bridge register 0x11,
+   halved on the way. Can be set while the stream is running and is ignored
+   when the camera is not open yet.
+
+sonix.stream/MMA_Sonix_ProductID
+
+ NAME
+   MMA_Sonix_ProductID (V1) [I.S.G], UWORD
+
+ FUNCTION
+   USB product id the camera is looked up by, 0 by default, which matches a
+   camera of any product. The selector is of no use once the camera has been
+   claimed and is refused with MMERR_WRONG_ARGUMENTS from then on. The
+   product id of the camera which was claimed is not reported here: it
+   travels in the SnxStreamHeader, and a sonix.demuxer behind the object
+   republishes it as its own MMA_Sonix_ProductID.
+
+sonix.stream/MMA_Sonix_ProductName
+
+ NAME
+   MMA_Sonix_ProductName (V1) [..S.G], STRPTR
+
+ FUNCTION
+   USB product string of the camera which was claimed, as a pointer to a
+   string which belongs to the object. The pointer is valid from creation on
+   and the string is empty until a camera has been claimed, so an
+   application can hand it out without checking first. Reading it after the
+   camera is gone leaves the name of the last one behind.
+
+ NOTES
+   The string belongs to the object and stays valid until it is disposed. It
+   must not be freed by the application.
+
+sonix.stream/MMA_Sonix_Red
+
+ NAME
+   MMA_Sonix_Red (V1) [..S.G], LONG
+
+ FUNCTION
+   Red gain of the sensor, 0 to 31 on the scale of the original driver; out
+   of range values are clamped. A PAS106B has a register for it and the
+   value is read back from the camera. A TAS5110C1B has none, so the value
+   is remembered and sent to the bridge register 0x10, which it shares with
+   blue. Can be set while the stream is running and is ignored when the
+   camera is not open yet.
+
+sonix.stream/MMA_Sonix_Sensor
+
+ NAME
+   MMA_Sonix_Sensor (V1) [..S.G], ULONG
+
+ FUNCTION
+   Sensor found behind the sn9c102 controller, one of the SNXS_* values:
+   SNXS_PAS106B or SNXS_TAS5110C1B. It is probed over I2C while the camera
+   is claimed, and SNXS_NONE is reported before that. A camera with neither
+   sensor is refused by MMM_Setup with MMERR_NO_STREAM_CLASS. The value also
+   travels in the SnxStreamHeader and is republished by a sonix.demuxer
+   behind the object.
+
+sonix.stream/MMA_Sonix_SensorName
+
+ NAME
+   MMA_Sonix_SensorName (V1) [..S.G], STRPTR
+
+ FUNCTION
+   Name of the sensor found behind the controller, "PAS106B" or
+   "TAS5110C1B", or "unknown" while no camera is open. Unlike
+   MMA_Sonix_Sensor this is a plain string and needs no translation.
+
+sonix.stream/MMA_Sonix_VendorID
+
+ NAME
+   MMA_Sonix_VendorID (V1) [I.S.G], UWORD
+
+ FUNCTION
+   USB vendor id the camera is looked up by, 0 by default, which matches a
+   camera of any vendor. The selector is of no use once the camera has been
+   claimed and is refused with MMERR_WRONG_ARGUMENTS from then on. The
+   vendor id of the camera which was claimed is not reported here: it
+   travels in the SnxStreamHeader, and a sonix.demuxer behind the object
+   republishes it as its own MMA_Sonix_VendorID.
+
+sonix.stream/MMM_Peek
+
+ NAME
+   MMM_Peek -- Reads the stream without consuming it. (V1)
+
+ SYNOPSIS
+   ULONG DoMethod(Object *obj, MMM_Peek, ULONG port, APTR buffer, ULONG
+   length);
+
+ FUNCTION
+   Hands out the bytes the next MMM_Pull on the same port would hand out,
+   without moving the read position, and reports how many of them there
+   were. When fewer than length bytes are left in the current frame, the
+   short count is returned; nothing is waited for to make the request
+   complete.
+
+   The class answers this itself instead of leaving it to the superclass,
+   which pulls the bytes and seeks back, something a live camera cannot do.
+   The recognition code of sonix.demuxer peeks the first 32 bytes of its
+   source to find the stream header, so peeking a sonix.stream costs one
+   frame interval of USB time and not a single byte of the stream.
+
+ INPUTS
+   obj - object to perform method on.
+   port - number of port, must be 0.
+   buffer - destination buffer for the stream bytes.
+   length - amount of data to be read in *bytes*.
+
+ RESULT
+   Number of bytes peeked, secondary error information via MMA_ErrorCode.
+
+ SEE ALSO
+   multimedia.class/MMA_ErrorCode
+
+sonix.stream/MMM_Pull
+
+ NAME
+   MMM_Pull -- Pulls framed picture data from the camera. (V1)
+
+ SYNOPSIS
+   ULONG DoMethod(Object *obj, MMM_Pull, ULONG port, APTR buffer, ULONG
+   length);
+
+ FUNCTION
+   Hands out the next bytes of the stream on port 0. The first 32 bytes are
+   the SnxStreamHeader, everything behind it is a SnxFrameHeader followed by
+   a complete picture. A pull which is asked for more than is left of the
+   current frame returns the rest of it and a short count; the next call
+   waits for the camera and continues behind the stream header, the header
+   itself is sent once.
+
+   The call blocks in the USB transfer for a frame interval whenever a new
+   frame is needed, which is where a live source spends its time. It does
+   not end by itself: the stream is only over when the camera is unplugged
+   or stops answering, which comes back as MMERR_IO_ERROR. A port other than
+   0, a NULL buffer or a length of 0 is refused with MMERR_WRONG_ARGUMENTS.
+
+ INPUTS
+   obj - object to perform method on.
+   port - number of port, must be 0, the single output port.
+   buffer - destination buffer for the stream bytes.
+   length - amount of data to be pulled in *bytes*.
+
+ RESULT
+   Number of bytes pulled, secondary error information via MMA_ErrorCode.
+
+ SEE ALSO
+   multimedia.class/MMA_ErrorCode
+
+sonix.stream/MMM_Restore
+
+ NAME
+   MMM_Restore -- Puts back what a peek has read. (V1)
+
+ SYNOPSIS
+   ULONG DoMethod(Object *obj, MMM_Restore);
+
+ FUNCTION
+   Does nothing and succeeds, because the MMM_Peek of this class leaves the
+   read position where it was and there is nothing to put back. The class
+   answers the call because the recognition code of sonix.demuxer restores
+   whatever it peeked, and the inherited method would answer that with
+   MMERR_NOT_SEEKABLE and leave the error behind.
+
+ INPUTS
+   obj - object to perform method on.
+
+ RESULT
+   TRUE, there is no secondary error information.
+
+ SEE ALSO
+   multimedia.class/MMA_ErrorCode
+
+
