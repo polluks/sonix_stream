@@ -48,6 +48,10 @@ sonix.stream/MMM_Restore
    until the next frame has been read, and it only fails when the camera is
    unplugged or stops answering, which comes back as MMERR_IO_ERROR.
 
+   A buffer and a length are required: a NULL buffer, a port other than 0 or
+   a length which is not positive is refused with MMERR_WRONG_ARGUMENTS, on
+   MMM_Pull and on MMM_Peek alike.
+
  NEW ATTRIBUTES
    Attributes applicability:
      I - may be set at creation time.
@@ -88,8 +92,9 @@ sonix.stream/MMM_Restore
    of range values are clamped. A PAS106B has a register for it and the
    value is read back from the camera. A TAS5110C1B has none, so the value
    is remembered and sent to the bridge register 0x10, which it shares with
-   red. Can be set while the stream is running and is ignored when the
-   camera is not open yet.
+   red. Can be set while the stream is running. It is accepted before the
+   camera has been claimed as well, and takes effect once the camera is
+   there.
 
 sonix.stream/MMA_Sonix_Brightness
 
@@ -101,7 +106,13 @@ sonix.stream/MMM_Restore
    sensor register counts the other way round, the value sent to it is 0x1f
    minus this attribute. Only a PAS106B implements it: with a TAS5110C1B the
    call does nothing and the value is reported as 0. Can be set while the
-   stream is running and is ignored when the camera is not open yet.
+   stream is running. It is accepted before the camera has been claimed as
+   well, and takes effect once the camera is there.
+
+ NOTES
+   The value which comes back is clamped to 0 to 31 as well. The register
+   counts down, so a camera answering with a value above 0x1f is reported as
+   0 rather than as a negative brightness.
 
 sonix.stream/MMA_Sonix_Contrast
 
@@ -111,8 +122,9 @@ sonix.stream/MMM_Restore
  FUNCTION
    Contrast of the sensor, 0 to 31; out of range values are clamped. Only a
    PAS106B implements it: with a TAS5110C1B the call does nothing and the
-   value is reported as 0. Can be set while the stream is running and is
-   ignored when the camera is not open yet.
+   value is reported as 0. Can be set while the stream is running. It is
+   accepted before the camera has been claimed as well, and takes effect
+   once the camera is there.
 
 sonix.stream/MMA_Sonix_Format
 
@@ -132,7 +144,9 @@ sonix.stream/MMM_Restore
  NOTES
    The value is a SNXF_* constant of sonixwire.h, not a Reggae MMF_* format.
    The format which carries the pictures over the demuxer follows from it:
-   MMF_VIDEO_RGB24 for SNXF_RGB24 and MMF_VIDEO_GRAY8 for SNXF_GRAY8.
+   MMF_VIDEO_RGB24 for SNXF_RGB24 and MMF_VIDEO_GRAY8 for SNXF_GRAY8. The
+   demuxer takes that format off the stream header, so it is on port 1 of
+   the demuxer from the first pull and not only after an MMM_Setup.
 
 sonix.stream/MMA_Sonix_Gain
 
@@ -145,7 +159,8 @@ sonix.stream/MMM_Restore
    the top five bits of the value reach the camera, so what is read back
    afterwards is the setting divided by 8. With a TAS5110C1B the call does
    nothing and the value is reported as 15. Can be set while the stream is
-   running and is ignored when the camera is not open yet.
+   running. It is accepted before the camera has been claimed as well, and
+   takes effect once the camera is there.
 
 sonix.stream/MMA_Sonix_Green
 
@@ -157,8 +172,9 @@ sonix.stream/MMM_Restore
    out of range values are clamped. A PAS106B has two registers for it, both
    are written, and the value is read back from the camera. A TAS5110C1B has
    none, so the value is remembered and sent to the bridge register 0x11,
-   halved on the way. Can be set while the stream is running and is ignored
-   when the camera is not open yet.
+   halved on the way. Can be set while the stream is running. It is accepted
+   before the camera has been claimed as well, and takes effect once the
+   camera is there.
 
 sonix.stream/MMA_Sonix_ProductID
 
@@ -199,8 +215,9 @@ sonix.stream/MMM_Restore
    of range values are clamped. A PAS106B has a register for it and the
    value is read back from the camera. A TAS5110C1B has none, so the value
    is remembered and sent to the bridge register 0x10, which it shares with
-   blue. Can be set while the stream is running and is ignored when the
-   camera is not open yet.
+   blue. Can be set while the stream is running. It is accepted before the
+   camera has been claimed as well, and takes effect once the camera is
+   there.
 
 sonix.stream/MMA_Sonix_Sensor
 
@@ -258,7 +275,9 @@ sonix.stream/MMM_Restore
    which pulls the bytes and seeks back, something a live camera cannot do.
    The recognition code of sonix.demuxer peeks the first 32 bytes of its
    source to find the stream header, so peeking a sonix.stream costs one
-   frame interval of USB time and not a single byte of the stream.
+   frame interval of USB time and not a single byte of the stream. A port
+   other than 0, a NULL buffer or a length which is not positive is refused
+   with MMERR_WRONG_ARGUMENTS.
 
  INPUTS
    obj - object to perform method on.
@@ -293,7 +312,8 @@ sonix.stream/MMM_Restore
    frame is needed, which is where a live source spends its time. It does
    not end by itself: the stream is only over when the camera is unplugged
    or stops answering, which comes back as MMERR_IO_ERROR. A port other than
-   0, a NULL buffer or a length of 0 is refused with MMERR_WRONG_ARGUMENTS.
+   0, a NULL buffer or a length which is not positive is refused with
+   MMERR_WRONG_ARGUMENTS.
 
  INPUTS
    obj - object to perform method on.
