@@ -7,7 +7,7 @@
   sonix.stream is a Reggae MMCLASS_STREAM object: its single port 0 always
   carries MMF_STREAM, so something has to strip the framing below before the
   pictures can reach a decoder.  sonix.demuxer does that and republishes the
-  frame data as MMF_VIDEO_RGB24 / MMFC_VIDEO_GRAY8.
+  frame data as MMF_VIDEO_RGB24 / MMF_VIDEO_GRAY8.
 
   All fields are big endian.  MorphOS is a big endian machine, so the two
   structures below are stored exactly as laid out in memory and need no
@@ -70,9 +70,12 @@ struct SnxFrameHeader
 	ULONG fh_Flags;           /* SNXFF_*                                 */
 };
 
-/* Picture geometry and size of a single frame, decoded from a stream header. */
+/* Picture geometry and size of a single frame, decoded from a stream header.
+ * The geometry arrives over the wire, so the product is taken in 64 bits: a
+ * 32 bit multiply of 65535 * 65535 * 3 wraps to a small number.  A caller
+ * which has established a sane geometry may cast the result down. */
 
 #define SNX_FRAME_BYTES(hdr) \
-	((ULONG)(hdr)->sh_Width * (hdr)->sh_Height * (hdr)->sh_BytesPerPixel)
+	((UQUAD)(hdr)->sh_Width * (UQUAD)(hdr)->sh_Height * (UQUAD)(hdr)->sh_BytesPerPixel)
 
 #endif /* SONIXWIRE_H */

@@ -404,6 +404,7 @@ BOOL ReadHeader(Class *cl, Object *obj)
 	GET_DATA;
 	ULONG got = 0;
 	ULONG pixels;
+	UQUAD framebytes;
 
 	while (got < sizeof(struct SnxStreamHeader))
 	{
@@ -450,13 +451,19 @@ BOOL ReadHeader(Class *cl, Object *obj)
 		return FALSE;
 	}
 
-	pixels = SNX_FRAME_BYTES(&d->dd_Header);
+	/* the macro takes the product in 64 bits, a 32 bit multiply of
+	 * 65535 * 65535 * 3 wraps to a small number and would sail past the
+	 * sanity check straight into a tiny allocation */
 
-	if (pixels > 16 * 1024 * 1024)
+	framebytes = SNX_FRAME_BYTES(&d->dd_Header);
+
+	if (framebytes == 0 || framebytes > 16 * 1024 * 1024)
 	{
 		seterr(MMERR_WRONG_DATA);
 		return FALSE;
 	}
+
+	pixels = (ULONG)framebytes;
 
 	if (d->dd_Frame) MediaFreeVec(d->dd_Frame);
 
@@ -477,6 +484,12 @@ BOOL ReadHeader(Class *cl, Object *obj)
 	d->dd_Sensor     = d->dd_Header.sh_Sensor;
 	d->dd_FrameTime  = d->dd_Header.sh_FrameTime;
 	d->dd_DataFormat = d->dd_Format == SNXF_GRAY8 ? "Sonix gray8" : "Sonix RGB24";
+
+	/* the format of port 1 follows the stream header, and the header can be
+	 * taken either by Setup or by a pull on port 1 which gets there first, so
+	 * it is published here rather than by one of the two callers */
+
+	DoMethod(obj, MMM_SetPort, 1, MMA_Port_Format, FormatOf(d->dd_Format));
 
 	d->dd_HaveHeader = TRUE;
 
@@ -690,7 +703,10 @@ LONG Pull(Class *cl, Object *obj, struct mmopData *msg)
 	GET_DATA;
 	ULONG bytes_pulled = 0;
 
-	if (!msg->Buffer || !msg->Length)
+	/* a negative length would be read as a huge unsigned one and copy the
+	 * rest of the frame into a buffer the caller never sized for it */
+
+	if (!msg->Buffer || msg->Length <= 0)
 	{
 		seterr(MMERR_WRONG_ARGUMENTS);
 		return 0;
@@ -753,11 +769,7 @@ LONG Setup(Class *cl, Object *obj, struct mmopPort *msg)
 		seterr(0);
 
 		if (d->dd_HaveHeader) rv = TRUE;
-		else if (ReadHeader(cl, obj))
-		{
-			DoMethod(obj, MMM_SetPort, 1, MMA_Port_Format, FormatOf(d->dd_Format));
-			rv = TRUE;
-		}
+		else if (ReadHeader(cl, obj)) rv = TRUE;   /* the port format is set by ReadHeader */
 
 		DoMethod(obj, MMM_UnlockObject);
 	}

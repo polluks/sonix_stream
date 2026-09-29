@@ -10,7 +10,7 @@
  * sonix.stream is an MMCLASS_STREAM object.  Its single port 0 is an output
  * carrying MMF_STREAM, so it has to be followed by a demultiplexer; the one
  * shipped here is sonix.demuxer, which turns the framed byte stream into
- * MMF_VIDEO_RGB24 (or MMFC_VIDEO_GRAY8) pictures.
+ * MMF_VIDEO_RGB24 (or MMF_VIDEO_GRAY8) pictures.
  *
  * The object is created and configured like this:
  *

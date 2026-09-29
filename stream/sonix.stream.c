@@ -991,28 +991,38 @@ LONG Set(Class *cl, Object *obj, struct opSet *msg)
 				done = TRUE;
 			break;
 
+			/* the sensor is only there once the camera has been claimed, and
+			 * the attributes are documented as ignored before that rather than
+			 * refused, so they are accepted either way */
+
 			case MMA_Sonix_Red:
-				if (d->od_Cam) { sonix_cam_set_red(d->od_Cam, value); done = TRUE; }
+				if (d->od_Cam) sonix_cam_set_red(d->od_Cam, value);
+				done = TRUE;
 			break;
 
 			case MMA_Sonix_Green:
-				if (d->od_Cam) { sonix_cam_set_green(d->od_Cam, value); done = TRUE; }
+				if (d->od_Cam) sonix_cam_set_green(d->od_Cam, value);
+				done = TRUE;
 			break;
 
 			case MMA_Sonix_Blue:
-				if (d->od_Cam) { sonix_cam_set_blue(d->od_Cam, value); done = TRUE; }
+				if (d->od_Cam) sonix_cam_set_blue(d->od_Cam, value);
+				done = TRUE;
 			break;
 
 			case MMA_Sonix_Gain:
-				if (d->od_Cam) { sonix_cam_set_gain(d->od_Cam, value); done = TRUE; }
+				if (d->od_Cam) sonix_cam_set_gain(d->od_Cam, value);
+				done = TRUE;
 			break;
 
 			case MMA_Sonix_Brightness:
-				if (d->od_Cam) { sonix_cam_set_brightness(d->od_Cam, value); done = TRUE; }
+				if (d->od_Cam) sonix_cam_set_brightness(d->od_Cam, value);
+				done = TRUE;
 			break;
 
 			case MMA_Sonix_Contrast:
-				if (d->od_Cam) { sonix_cam_set_contrast(d->od_Cam, value); done = TRUE; }
+				if (d->od_Cam) sonix_cam_set_contrast(d->od_Cam, value);
+				done = TRUE;
 			break;
 
 			default: break;
@@ -1037,7 +1047,10 @@ LONG Pull(Class *cl, Object *obj, struct mmopData *msg)
 	GET_DATA;
 	ULONG bytes_pulled = 0;
 
-	if (msg->Port != 0 || !msg->Buffer || !msg->Length)
+	/* a negative length would be read as a huge unsigned one and copy the
+	 * rest of the frame into a buffer the caller never sized for it */
+
+	if (msg->Port != 0 || !msg->Buffer || msg->Length <= 0)
 	{
 		seterr(MMERR_WRONG_ARGUMENTS);
 		return 0;
@@ -1087,7 +1100,7 @@ LONG Peek(Class *cl, Object *obj, struct mmopData *msg)
 	GET_DATA;
 	ULONG bytes_peeked = 0;
 
-	if (msg->Port != 0 || !msg->Buffer || !msg->Length)
+	if (msg->Port != 0 || !msg->Buffer || msg->Length <= 0)
 	{
 		seterr(MMERR_WRONG_ARGUMENTS);
 		return 0;

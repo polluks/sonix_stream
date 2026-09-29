@@ -605,9 +605,9 @@ LONG sonix_cam_capture(struct SonixCam *cam, UBYTE *raw)
 	 * transfer length only counts payload on some stack versions, so accept
 	 * the data at either offset. */
 
-	if (got >= SNX_FRAME_BYTES + SNX_HEADER_SIZE)
+	if (got >= SONIX_FRAME_BYTES + SNX_HEADER_SIZE)
 		CopyMem(cam->sc_Raw + SNX_HEADER_SIZE, raw, SONIX_FRAME_BYTES);
-	else if (got >= SNX_FRAME_BYTES)
+	else if (got >= SONIX_FRAME_BYTES)
 		CopyMem(cam->sc_Raw, raw, SONIX_FRAME_BYTES);
 	else
 		return SONIX_ERR_USB;
@@ -799,7 +799,13 @@ LONG sonix_cam_get_brightness(struct SonixCam *cam)
 
 	v = i2c_read(cam, SNX_TAS5110_BRIGHT);
 
-	return v < 0 ? 0 : (0x1f - v);
+	/* the register counts down, so a value above 0x1f would hand out a
+	 * negative brightness the attribute promises to be 0 to 31 */
+
+	if (v < 0)    return 0;
+	if (v > 0x1f) return 0;
+
+	return 0x1f - v;
 }
 
 void sonix_cam_set_contrast(struct SonixCam *cam, LONG value)
