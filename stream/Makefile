@@ -22,6 +22,7 @@ all: $(OUTPUT)
 
 clean:
 	-rm -rf $(OBJS) *.bak *.s *.db $(OUTPUT) recognize
+	-rm -f capture.o psdusb.o bayer.o
 
 install: all
 	mkdir -p /SYS/MorphOS/Classes/Multimedia
@@ -50,6 +51,6 @@ sonix.stream.o: sonix.stream.c sonix.stream.h class_version.h ../sonixwire.h $(C
 	$(CC) $(CFLAGS) -I$(COMMON) -c $<
 
 $(COMMON)/%.o: $(COMMON)/%.c
-	$(CC) $(CFLAGS) -I$(COMMON) -c $<
+	$(CC) $(CFLAGS) -I$(COMMON) -c -o $@ $<
 
 #===============================================================================
