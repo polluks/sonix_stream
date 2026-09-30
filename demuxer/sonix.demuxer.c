@@ -96,7 +96,10 @@ struct ObjData
 	ULONG                 dd_Vendor;
 	ULONG                 dd_Product;
 	ULONG                 dd_Sensor;
-	ULONG                 dd_FrameTime;
+	ULONG                 dd_FrameTime;   /* measured, from frame timestamps */
+	ULONG                 dd_LastTime;    /* fh_Timestamp of the last frame   */
+	BOOL                  dd_HaveTime;
+	BOOL                  dd_Failed;      /* the stream desynchronised, stop  */
 	STRPTR                dd_DataFormat;
 };
 
@@ -129,6 +132,7 @@ LONG Get(Class *cl, Object *obj, struct opGet *msg);
 
 LONG Pull(Class *cl, Object *obj, struct mmopData *msg);
 LONG Setup(Class *cl, Object *obj, struct mmopPort *msg);
+LONG PullInput(Class *cl, Object *obj, UBYTE *buffer, ULONG length);
 BOOL ReadHeader(Class *cl, Object *obj);
 BOOL ReadFrame(Class *cl, Object *obj);
 ULONG FormatOf(ULONG format);
@@ -393,11 +397,42 @@ ULONG FormatOf(ULONG format)
 }
 
 ///
+/// PullInput()
+///
+/// One pull on the input port, going straight to the superclass.
+///
+/// This has to bypass our own MMM_Pull.  The callers hold the object lock, and
+/// a DoMethod() on our own object would come back through this class and try to
+/// take that same lock a second time, which a plain semaphore does not allow:
+/// the object would deadlock on its own first frame.  The superclass is what
+/// actually owns port 0, so asking it directly is both correct and free of the
+/// re-entry.  It also keeps the passthrough in Pull() out of the way of our
+/// own reads.
+
+LONG PullInput(Class *cl, Object *obj, UBYTE *buffer, ULONG length)
+{
+	struct mmopData pull;
+
+	pull.mdm_MethodID = MMM_Pull;
+	pull.Port         = 0;
+	pull.Buffer       = buffer;
+	pull.Length       = (LONG)length;
+
+	return DoSuperMethodA(cl, obj, (Msg)&pull);
+}
+
+///
 /// ReadHeader()
 ///
 /// Pulls the SnxStreamHeader off port 0 and allocates the frame buffer.  A
 /// stream which does not start with "SNX1" is refused here, so a wrong class
 /// in a pipeline shows up as MMERR_WRONG_DATA rather than as noise.
+///
+/// A source which has not started yet hands out nothing at all, and that is
+/// not a failure: the pull is refused and the next one reads the header.  As
+/// soon as one byte has been taken off the port, though, the stream is out of
+/// step and no later pull can make it line up again, so that is a failure for
+/// good in the same way a bad frame size is.
 
 BOOL ReadHeader(Class *cl, Object *obj)
 {
@@ -408,47 +443,62 @@ BOOL ReadHeader(Class *cl, Object *obj)
 
 	while (got < sizeof(struct SnxStreamHeader))
 	{
-		LONG rv = DoMethod(obj, MMM_Pull, 0,
-		                   (ULONG)((UBYTE *)&d->dd_Header) + got,
-		                   (LONG)(sizeof(struct SnxStreamHeader) - got));
+		LONG rv = PullInput(cl, obj, (UBYTE *)&d->dd_Header + got,
+		                    (ULONG)(sizeof(struct SnxStreamHeader) - got));
 
 		if (rv <= 0)
 		{
-			seterr(MMERR_WRONG_DATA);
+			/* nothing at all came back, so the error which stopped the
+			 * pull is the one worth reporting: a source which is not
+			 * running yet says so itself, and overwriting that with
+			 * MMERR_WRONG_DATA would blame the data for it.  Bytes have
+			 * been taken off the port, on the other hand, so the stream
+			 * can never line up again */
+
+			if (got)
+			{
+				seterr(MMERR_WRONG_DATA);
+				d->dd_Failed = TRUE;
+			}
+
 			return FALSE;
 		}
 
 		got += (ULONG)rv;
 	}
 
+	/* the whole header is in hand and none of it is one, so there is nothing
+	 * to wait for either: whatever is on the other end of port 0 is not a
+	 * Sonix stream, and reading on would only be guessing where the frames
+	 * of a stream we never found could begin */
+
+#define BAD_STREAM_HEADER() \
+	do { seterr(MMERR_WRONG_DATA); d->dd_Failed = TRUE; return FALSE; } while (0)
+
 	if (d->dd_Header.sh_Magic[0] != 'S' ||
 	    d->dd_Header.sh_Magic[1] != 'N' ||
 	    d->dd_Header.sh_Magic[2] != 'X' ||
 	    d->dd_Header.sh_Magic[3] != '1')
 	{
-		seterr(MMERR_WRONG_DATA);
-		return FALSE;
+		BAD_STREAM_HEADER();
 	}
 
 	if (d->dd_Header.sh_HeaderSize != sizeof(struct SnxStreamHeader) ||
 	    d->dd_Header.sh_Width == 0 || d->dd_Header.sh_Height == 0)
 	{
-		seterr(MMERR_WRONG_DATA);
-		return FALSE;
+		BAD_STREAM_HEADER();
 	}
 
 	if (d->dd_Header.sh_Format != SNXF_GRAY8 &&
 	    d->dd_Header.sh_Format != SNXF_RGB24)
 	{
-		seterr(MMERR_WRONG_DATA);
-		return FALSE;
+		BAD_STREAM_HEADER();
 	}
 
 	if (d->dd_Header.sh_BytesPerPixel !=
 	    (d->dd_Header.sh_Format == SNXF_GRAY8 ? 1 : 3))
 	{
-		seterr(MMERR_WRONG_DATA);
-		return FALSE;
+		BAD_STREAM_HEADER();
 	}
 
 	/* the macro takes the product in 64 bits, a 32 bit multiply of
@@ -459,8 +509,7 @@ BOOL ReadHeader(Class *cl, Object *obj)
 
 	if (framebytes == 0 || framebytes > 16 * 1024 * 1024)
 	{
-		seterr(MMERR_WRONG_DATA);
-		return FALSE;
+		BAD_STREAM_HEADER();
 	}
 
 	pixels = (ULONG)framebytes;
@@ -470,6 +519,10 @@ BOOL ReadHeader(Class *cl, Object *obj)
 	d->dd_Frame = (UBYTE *)MediaAllocVec(pixels);
 	if (!d->dd_Frame)
 	{
+		/* no memory is a different thing to be out of: the header was
+		 * read and the stream is in step, so a later pull may still get
+		 * the frame out of it */
+
 		seterr(MMERR_OUT_OF_MEMORY);
 		return FALSE;
 	}
@@ -482,8 +535,15 @@ BOOL ReadHeader(Class *cl, Object *obj)
 	d->dd_Vendor     = d->dd_Header.sh_VendorID;
 	d->dd_Product    = d->dd_Header.sh_ProductID;
 	d->dd_Sensor     = d->dd_Header.sh_Sensor;
-	d->dd_FrameTime  = d->dd_Header.sh_FrameTime;
 	d->dd_DataFormat = d->dd_Format == SNXF_GRAY8 ? "Sonix gray8" : "Sonix RGB24";
+
+	/* the nominal frame time of the header is only a hint and a source which
+	 * has just been opened has none, so the running average is measured from
+	 * the frame timestamps instead, starting from zero */
+
+	d->dd_FrameTime  = 0;
+	d->dd_LastTime   = 0;
+	d->dd_HaveTime   = FALSE;
 
 	/* the format of port 1 follows the stream header, and the header can be
 	 * taken either by Setup or by a pull on port 1 which gets there first, so
@@ -496,13 +556,16 @@ BOOL ReadHeader(Class *cl, Object *obj)
 	return TRUE;
 }
 
+#undef BAD_STREAM_HEADER
+
 ///
 /// ReadFrame()
 ///
-/// Reads one SnxFrameHeader and the pixel data behind it into dd_Frame.  A
-/// frame whose size does not match the stream header is refused, the stream
-/// cannot be resynchronised after that, so an error here is fatal for the
-/// object.
+/// Reads one SnxFrameHeader and the pixel data behind it into dd_Frame.  There
+/// is no way back from a short read or from a frame size which does not match
+/// the stream header, the framing cannot be resynchronised, so an error here
+/// puts the object into a failed state: every later pull refuses it with the
+/// error of the first failure instead of reading whatever comes next.
 
 BOOL ReadFrame(Class *cl, Object *obj)
 {
@@ -513,18 +576,19 @@ BOOL ReadFrame(Class *cl, Object *obj)
 	if (!d->dd_HaveHeader)
 	{
 		seterr(MMERR_WRONG_DATA);
+		d->dd_Failed = TRUE;
 		return FALSE;
 	}
 
 	while (got < sizeof(struct SnxFrameHeader))
 	{
-		LONG rv = DoMethod(obj, MMM_Pull, 0,
-		                   (ULONG)((UBYTE *)&fh) + got,
-		                   (LONG)(sizeof(struct SnxFrameHeader) - got));
+		LONG rv = PullInput(cl, obj, (UBYTE *)&fh + got,
+		                    (ULONG)(sizeof(struct SnxFrameHeader) - got));
 
 		if (rv <= 0)
 		{
 			seterr(MMERR_IO_ERROR);
+			d->dd_Failed = TRUE;
 			return FALSE;
 		}
 
@@ -534,19 +598,19 @@ BOOL ReadFrame(Class *cl, Object *obj)
 	if (fh.fh_FrameSize != sizeof(struct SnxFrameHeader) + d->dd_FrameSize)
 	{
 		seterr(MMERR_WRONG_DATA);
+		d->dd_Failed = TRUE;
 		return FALSE;
 	}
 
 	got = 0;
 	while (got < d->dd_FrameSize)
 	{
-		LONG rv = DoMethod(obj, MMM_Pull, 0,
-		                   (ULONG)(d->dd_Frame + got),
-		                   (LONG)(d->dd_FrameSize - got));
+		LONG rv = PullInput(cl, obj, d->dd_Frame + got, d->dd_FrameSize - got);
 
 		if (rv <= 0)
 		{
 			seterr(MMERR_IO_ERROR);
+			d->dd_Failed = TRUE;
 			return FALSE;
 		}
 
@@ -556,6 +620,28 @@ BOOL ReadFrame(Class *cl, Object *obj)
 	d->dd_FrameLen   = got;
 	d->dd_FramePos   = 0;
 	d->dd_FrameIndex = fh.fh_Index;
+
+	/* the source stamps every frame with the microseconds since it was
+	 * opened, so the gap between two of them is the real inter frame time and
+	 * that is what the fps attributes have to be built from */
+
+	if (d->dd_HaveTime)
+	{
+		ULONG delta = fh.fh_Timestamp - d->dd_LastTime;
+
+		/* a clock which wrapped or a source which skipped ahead is not a
+		 * frame time, ignore it and keep the running average */
+
+		if (delta > 0 && delta < 2000000)
+		{
+			d->dd_FrameTime = d->dd_FrameTime
+			                ? (d->dd_FrameTime * 3 + delta) / 4
+			                : delta;
+		}
+	}
+
+	d->dd_LastTime = fh.fh_Timestamp;
+	d->dd_HaveTime = TRUE;
 
 	return TRUE;
 }
@@ -589,6 +675,10 @@ LONG New(Class *cl, Object *obj, struct opSet *msg)
 
 		d->dd_Frame       = NULL;
 		d->dd_HaveHeader  = FALSE;
+		d->dd_Failed      = FALSE;
+		d->dd_FrameTime   = 0;
+		d->dd_LastTime    = 0;
+		d->dd_HaveTime    = FALSE;
 		d->dd_DataFormat  = "Sonix RGB24";
 
 		newobj = (LONG)obj;
@@ -643,10 +733,14 @@ LONG Get(Class *cl, Object *obj, struct opGet *msg)
 			*(UQUAD*)msg->opg_Storage = 0;
 			return TRUE;
 
+		/* the rate is measured in microseconds per frame, and Reggae wants a
+		 * plain fraction, so it is a second over the inter frame time.  With
+		 * 1 / frameTime as it used to be, a 30 fps camera came out as 1/33333
+		 * fps, which is off by a factor of a million.  Nothing is known until
+		 * two frames have been read, that is reported as 0 fps. */
+
 		case MMA_Video_FpsNumerator:
-			/* the camera does not publish a rate, so hand out 1 and let
-			 * the measured inter frame time speak through MMA_Sonix_FrameTime */
-			*msg->opg_Storage = 1;
+			*msg->opg_Storage = d->dd_FrameTime ? 1000000 : 0;
 			return TRUE;
 
 		case MMA_Video_FpsDenominator:
@@ -714,6 +808,16 @@ LONG Pull(Class *cl, Object *obj, struct mmopData *msg)
 
 	DoMethod(obj, MMM_LockObject);
 	seterr(0);
+
+	/* once the framing is lost there is nothing sensible left to hand out,
+	 * the next bytes of the stream would be taken for a frame header */
+
+	if (d->dd_Failed)
+	{
+		seterr(MMERR_IO_ERROR);
+		DoMethod(obj, MMM_UnlockObject);
+		return 0;
+	}
 
 	switch (msg->Port)
 	{
