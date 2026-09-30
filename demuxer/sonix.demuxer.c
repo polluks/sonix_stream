@@ -413,7 +413,7 @@ LONG PullInput(Class *cl, Object *obj, UBYTE *buffer, ULONG length)
 {
 	struct mmopData pull;
 
-	pull.mdm_MethodID = MMM_Pull;
+	pull.MethodID = MMM_Pull;
 	pull.Port         = 0;
 	pull.Buffer       = buffer;
 	pull.Length       = (LONG)length;
