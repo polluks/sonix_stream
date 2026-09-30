@@ -40,9 +40,11 @@ sonix.stream/MMM_Restore
    out of the sensor.
 
    Pictures are 352x288, the only mode this controller is driven in. The
-   camera delivers an interleaved Bayer pattern, which is either handed over
-   as it is, as SNXF_GRAY8, or interpolated into packed RGB24, as
-   SNXF_RGB24.
+   camera delivers an interleaved Bayer pattern of one colour sample per
+   pixel, which is averaged into one luminance per 2x2 cell and handed over
+   as SNXF_GRAY8, or interpolated into packed RGB24, as SNXF_RGB24. Either
+   way what comes out of the demuxer is a picture in the format the port
+   announces, not a colour mosaic passed off as grey.
 
    The stream never ends by itself. MMM_Pull blocks in the USB transfer
    until the next frame has been read, and it only fails when the camera is
@@ -134,12 +136,20 @@ sonix.stream/MMM_Restore
  FUNCTION
    Pixel format of the frame data, one of SNXF_GRAY8 and SNXF_RGB24. The
    default is SNXF_RGB24, which interpolates the Bayer pattern the camera
-   delivers into packed RGB24. SNXF_GRAY8 hands the pattern over as it is,
-   which needs no interpolation and is about three times faster, at the
-   price of colour. Changing the format reallocates the frame buffer and
-   starts the stream over, so the SnxStreamHeader is sent again and the
-   demuxer behind the object follows. Any other value is refused with
-   MMERR_WRONG_ARGUMENTS.
+   delivers into packed RGB24. SNXF_GRAY8 averages the pattern into one
+   luminance per 2x2 cell, which needs no colour interpolation and is about
+   four times faster, at the price of colour. Any other value is refused
+   with MMERR_WRONG_ARGUMENTS.
+
+   The format can only be set before the camera has been claimed and is
+   refused with MMERR_WRONG_ARGUMENTS afterwards. The reason is the stream
+   header: it carries the format and the demuxer behind this object reads
+   exactly one of those, so a change made while the stream runs would need a
+   second header where a frame header is expected, and the demuxer would
+   read it as a frame, see a size that matches nothing and give up. The
+   camera is claimed by MMM_Setup(), so set the format on the object before
+   the pipeline is set up. Until then it is accepted, the frame buffer is
+   reallocated for it, and the one stream header is built with it.
 
  NOTES
    The value is a SNXF_* constant of sonixwire.h, not a Reggae MMF_* format.

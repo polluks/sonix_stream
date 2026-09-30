@@ -115,8 +115,11 @@ struct ObjData
 	ULONG               od_Format;
 	ULONG               od_Vendor;
 	ULONG               od_Product;
-	ULONG               od_FrameIndex;
+	ULONG               od_FrameIndex;   /* index of the frame in the buffer now   */
 	ULONG               od_StartTime;
+	ULONG               od_BytesServed;  /* stream bytes handed out so far        */
+	ULONG               od_FramesServed; /* frames handed out in full so far      */
+	ULONG               od_TimeServed;   /* us since the camera was claimed       */
 	BOOL                od_HeaderSent;
 	BOOL                od_FrameReady;  /* od_Output holds an unserved frame */
 	STRPTR              od_ProductName;
@@ -517,6 +520,9 @@ LONG New(Class *cl, Object *obj, struct opSet *msg)
 		d->od_HeaderSent = FALSE;
 		d->od_FrameReady = FALSE;
 		d->od_FrameIndex = 0;
+		d->od_BytesServed  = 0;
+		d->od_FramesServed = 0;
+		d->od_TimeServed   = 0;
 
 		/* a bare MMA_Sonix_ProductID wins over the name, so an application
 		 * can address the camera without knowing the string syntax */
@@ -587,12 +593,15 @@ void CloseCamera(struct ObjData *d)
 		d->od_Cam = NULL;
 	}
 
-	d->od_Opened     = FALSE;
-	d->od_HeaderSent = FALSE;
-	d->od_FrameReady = FALSE;
-	d->od_OutputPos  = 0;
-	d->od_FrameIndex = 0;
-	d->od_StartTime  = 0;
+	d->od_Opened       = FALSE;
+	d->od_HeaderSent   = FALSE;
+	d->od_FrameReady   = FALSE;
+	d->od_OutputPos    = 0;
+	d->od_FrameIndex   = 0;
+	d->od_StartTime    = 0;
+	d->od_BytesServed  = 0;
+	d->od_FramesServed = 0;
+	d->od_TimeServed   = 0;
 }
 
 ///
@@ -752,10 +761,12 @@ BOOL CaptureFrame(Object *obj, struct ObjData *d)
 
 	if (d->od_Format == SNXF_GRAY8)
 	{
-		/* the Bayer pattern is already one byte per pixel, no interpolation
-		 * needed, the decoder sees the same colour twice for every pixel */
+		/* The mosaic is one sample per pixel, not one luminance per pixel, so
+		 * it cannot be copied through and called grey.  A 2x2 average is
+		 * enough to turn it into the grey picture the format promises and
+		 * costs a quarter of what bayer2rgb24() does. */
 
-		memcpy(pixels, d->od_Raw, SONIX_FRAME_BYTES);
+		bayer2gray8(pixels, d->od_Raw, SONIX_WIDTH, SONIX_HEIGHT);
 	}
 	else
 	{
@@ -814,6 +825,27 @@ BOOL SetFormat(Object *obj, struct ObjData *d, ULONG format)
 
 	if (format == d->od_Format) return TRUE;
 
+	/* The format decides the length of the picture, so the frame buffer is
+	 * the one thing which has to be reallocated, and the stream header in it
+	 * has to be built again for the new format.  Sending that second header
+	 * is what cannot be done: the demuxer behind this object has read exactly
+	 * one stream header by now and expects a frame header next, so it would
+	 * take the stream header for a frame header, see a size that matches
+	 * nothing and give up on the stream.
+	 *
+	 * od_Opened is the point of no return and not od_HeaderSent.  The camera
+	 * is claimed by MMM_Setup() and the header goes out with the first pull,
+	 * which the demuxer itself drives, so by the time the camera is up the
+	 * header may well be half served already.  Checking od_HeaderSent would
+	 * accept a format change in exactly that window, reallocate the buffer
+	 * underneath a header the demuxer is in the middle of reading. */
+
+	if (d->od_Opened)
+	{
+		seterr(MMERR_WRONG_ARGUMENTS);
+		return FALSE;
+	}
+
 	pixelLen = (format == SNXF_GRAY8)
 	         ? (ULONG)SONIX_FRAME_BYTES
 	         : (ULONG)SONIX_FRAME_BYTES * 3;
@@ -837,13 +869,13 @@ BOOL SetFormat(Object *obj, struct ObjData *d, ULONG format)
 	d->od_DataFormat = format == SNXF_GRAY8 ? "Sonix gray8" : "Sonix RGB24";
 
 	/* nothing in the buffer belongs to the old format any more, and the
-	 * stream header has to be built again for the new one */
+	 * stream header has to be built again for the new one.  The camera is
+	 * not up yet, that is what the check above just checked for, so the
+	 * header is built by OpenCamera() and this is the only one there is. */
 
 	d->od_OutputPos  = 0;
 	d->od_HeaderSent = FALSE;
 	d->od_FrameReady = FALSE;
-
-	if (d->od_Opened) BuildHeader(d);
 
 	return TRUE;
 }
@@ -925,7 +957,14 @@ LONG Get(Class *cl, Object *obj, struct opGet *msg)
 			*msg->opg_Storage = d->od_Cam ? sonix_cam_get_contrast(d->od_Cam) : 0;
 			return TRUE;
 
-		/* a live source has no length and cannot be seeked or rewound */
+		/* A live source has no length, no byte offset and no way back, but
+		 * the frames it has handed out are a position of sorts.  These are
+		 * running totals: the stream position does not jump back to zero
+		 * every time the buffer has been served to the end and the next pull
+		 * has to wait for the camera, otherwise an application which polls
+		 * the position once a second would see it stand still.  The frame
+		 * being handed out at the moment counts as handed out up to the
+		 * cursor, so the totals only ever move forward. */
 
 		case MMA_StreamLength:
 			*(UQUAD*)msg->opg_Storage = 0;
@@ -936,15 +975,15 @@ LONG Get(Class *cl, Object *obj, struct opGet *msg)
 			return TRUE;
 
 		case MMA_StreamPosBytes:
-			*(UQUAD*)msg->opg_Storage = 0;
+			*(UQUAD*)msg->opg_Storage = d->od_BytesServed;
 			return TRUE;
 
 		case MMA_StreamPosFrames:
-			*(UQUAD*)msg->opg_Storage = d->od_FrameIndex;
+			*(UQUAD*)msg->opg_Storage = d->od_FramesServed;
 			return TRUE;
 
 		case MMA_StreamPosTime:
-			*(UQUAD*)msg->opg_Storage = 0;
+			*(UQUAD*)msg->opg_Storage = d->od_TimeServed;
 			return TRUE;
 
 		default:
@@ -965,8 +1004,16 @@ LONG Set(Class *cl, Object *obj, struct opSet *msg)
 	GET_DATA;
 	struct TagItem *tag = msg->ops_AttrList;
 	BOOL done = FALSE;
+	BOOL failed = FALSE;
 
-	while (tag && tag->ti_Tag != TAG_END)
+	/* SetFormat() releases and reallocates od_Output, which a pull on another
+	 * task may be copying out of at that very moment, and the colour setters
+	 * talk to the camera.  The object lock is what keeps the two apart, the
+	 * same one MMM_Pull takes. */
+
+	DoMethod(obj, MMM_LockObject);
+
+	while (tag && tag->ti_Tag != TAG_END && !failed)
 	{
 		LONG value = (LONG)tag->ti_Data;
 
@@ -980,7 +1027,8 @@ LONG Set(Class *cl, Object *obj, struct opSet *msg)
 				if (d->od_Cam)
 				{
 					seterr(MMERR_WRONG_ARGUMENTS);
-					return FALSE;
+					failed = TRUE;
+					break;
 				}
 
 				if (tag->ti_Tag == MMA_Sonix_VendorID) d->od_Vendor  = (ULONG)(UWORD)value;
@@ -990,8 +1038,8 @@ LONG Set(Class *cl, Object *obj, struct opSet *msg)
 			break;
 
 			case MMA_Sonix_Format:
-				if (!SetFormat(obj, d, (ULONG)value)) return FALSE;
-				done = TRUE;
+				if (SetFormat(obj, d, (ULONG)value)) done = TRUE;
+				else                                 failed = TRUE;
 			break;
 
 			/* the sensor is only there once the camera has been claimed, and
@@ -1034,7 +1082,9 @@ LONG Set(Class *cl, Object *obj, struct opSet *msg)
 		tag += 2;
 	}
 
-	return done;
+	DoMethod(obj, MMM_UnlockObject);
+
+	return failed ? FALSE : done;
 }
 
 ///
@@ -1072,6 +1122,11 @@ LONG Pull(Class *cl, Object *obj, struct mmopData *msg)
 		d->od_OutputPos += len;
 		bytes_pulled     = len;
 
+		/* the running stream position, which moves with the cursor and is
+		 * never given back */
+
+		d->od_BytesServed += len;
+
 		/* a buffer which has been served to the end holds no frame any
 		 * more, so the next call waits for the camera again and starts
 		 * behind the stream header */
@@ -1080,6 +1135,13 @@ LONG Pull(Class *cl, Object *obj, struct mmopData *msg)
 		{
 			d->od_HeaderSent = TRUE;
 			d->od_FrameReady = FALSE;
+
+			/* this frame has been handed out in full, and the time is the
+			 * moment it finished going out, not the moment the first of its
+			 * bytes was asked for */
+
+			d->od_FramesServed++;
+			d->od_TimeServed = d->od_StartTime ? sonix_cam_now_us() - d->od_StartTime : 0;
 		}
 	}
 

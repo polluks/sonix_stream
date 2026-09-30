@@ -99,3 +99,38 @@ void bayer2rgb24(unsigned char *dst, unsigned char *src, long int WIDTH, long in
 
 }
 
+/*
+ * BAYER2GRAY8, written for this driver and not part of the routine above, so
+ * it is not covered by its licence and is not taken from it.
+ *
+ * The camera delivers one colour sample per pixel, so handing that mosaic over
+ * as a grey picture is a lie: adjacent pixels are samples of different
+ * colours and a decoder which reads them as luminance gets a fine checkerboard
+ * instead of a picture.  A 2x2 average costs a quarter of what the RGB
+ * interpolation costs and gives one honest luminance per 2x2 cell, which is
+ * what SNXF_GRAY8 claims: one byte of grey per pixel, 8 bits per pixel.
+ */
+
+void bayer2gray8(unsigned char *dst, unsigned char *src, long int WIDTH, long int HEIGHT)
+{
+    long int y, x;
+
+    for (y = 0; y < HEIGHT; y += 2) {
+	for (x = 0; x < WIDTH; x += 2) {
+	    unsigned int sum = (unsigned int)src[y * WIDTH + x]
+	                     + (unsigned int)src[y * WIDTH + x + 1]
+	                     + (unsigned int)src[(y + 1) * WIDTH + x]
+	                     + (unsigned int)src[(y + 1) * WIDTH + x + 1];
+	    unsigned char grey = (unsigned char)((sum + 2) / 4);
+
+	    /* one cell of the mosaic becomes one cell of the picture: the
+	     * geometry does not change, so the frame header stays right */
+
+	    dst[y * WIDTH + x]            = grey;
+	    dst[y * WIDTH + x + 1]        = grey;
+	    dst[(y + 1) * WIDTH + x]      = grey;
+	    dst[(y + 1) * WIDTH + x + 1]  = grey;
+	}
+    }
+}
+

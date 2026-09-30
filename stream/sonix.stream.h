@@ -43,9 +43,11 @@
 #define MMA_Sonix_ProductID  (MMA_Dummy + 1601)  /* [I.S.G], UWORD  */
 
 /* Format the frame data is converted to, one of SNXF_*.  Defaults to
- * SNXF_RGB24; SNXF_GRAY8 skips the Bayer interpolation and is roughly three
- * times faster, at the price of colour.  Changing it while the stream is
- * running discards the frame in flight and restarts the stream header. */
+ * SNXF_RGB24; SNXF_GRAY8 averages the Bayer pattern into one luminance per
+ * 2x2 cell and is roughly four times faster, at the price of colour.  It may
+ * be set at creation time and until the camera has been claimed; after that
+ * the format is fixed, because the demuxer behind the object has read the
+ * stream header and cannot follow a second one. */
 
 #define MMA_Sonix_Format     (MMA_Dummy + 1602)  /* [I.S.G], ULONG  */
 
