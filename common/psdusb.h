@@ -40,14 +40,19 @@ LONG sonix_usb_control(APTR handle, ULONG requesttype, ULONG request,
                        ULONG value, ULONG index, UBYTE *bytes, ULONG size);
 
 /*
- * Synchronous read of up to size bytes from the bulk IN pipe.  Returns the
- * number of bytes actually received, or -1 on error.  The webcam has a single
- * bulk endpoint and ignores the endpoint number.
+ * Synchronous read of the bulk IN pipe.  Loops until size bytes have arrived,
+ * so a single short transfer does not truncate a frame.  Returns the number of
+ * bytes actually received, or -1 if the very first transfer failed.  The
+ * webcam has a single bulk endpoint and ignores the endpoint number.
  */
 LONG sonix_usb_bulk_read(APTR handle, UBYTE *bytes, ULONG size);
 
 /* Size of a single bulk packet, used to size the read timeout. */
 ULONG sonix_usb_bulk_packetsize(APTR handle);
+
+/* FALSE once Poseidon has reported the device gone, so the caller can skip
+ * transfers that could only fail. */
+BOOL sonix_usb_alive(APTR handle);
 
 /* Sleep, so the capture loop can back off without a busy spin. */
 void sonix_usb_delay_ms(LONG ms);

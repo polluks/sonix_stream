@@ -114,11 +114,6 @@ static const UBYTE pas106b_sensor_init[][2] =
 	{20, 0x02}
 };
 
-static const UBYTE pas106b_validate[][2] =
-{
-	{SNX_TAS1110_VALIDATE, 0x01}
-};
-
 /* TAS5110C1B wants its setup written as eight byte I2C cycles. */
 
 static const UBYTE tas5110_sensor_init[][8] =
@@ -305,14 +300,6 @@ static LONG i2c_read(struct SonixCam *cam, UBYTE address)
 
 	return err ? -1 : (LONG)buf[4];
 }
-
-/*
- * i2c_read_cached()
- *
- * Reading a sensor register costs four control transfers.  The gains are
- * polled often enough by applications that the value is worth keeping, but
- * only for a short while, so a stale entry expires on its own.
- */
 
 /*
  * i2c_write()
@@ -528,7 +515,12 @@ void sonix_cam_close(struct SonixCam *cam)
 {
 	if (!cam) return;
 
-	video_enable(cam, FALSE);
+	/* Switching the sensor off is a control transfer, and a camera which has
+	 * been unplugged is gone for good: the transfer would only come back as an
+	 * error, so ask first. */
+
+	if (sonix_usb_alive(cam->sc_Usb)) video_enable(cam, FALSE);
+
 	sonix_usb_close(cam->sc_Usb);
 	FreeMem(cam, sizeof(struct SonixCam));
 }

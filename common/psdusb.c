@@ -47,6 +47,7 @@ struct SonixUsb
 	struct PsdPipe        *su_CtrlPipe;
 	struct PsdPipe        *su_BulkPipe;
 	struct MsgPort        *su_MsgPort;
+	struct Hook             su_ReleaseHook;
 	ULONG                  su_VendorID;
 	ULONG                  su_ProductID;
 	ULONG                  su_BulkPacketSize;
@@ -73,9 +74,6 @@ static LONG releasehook(APTR arg, APTR obj, APTR message)
 
 	return 0;
 }
-
-static struct Hook release_hook;
-static BOOL release_hook_ready;
 
 /*
  * init_hook()
@@ -111,9 +109,25 @@ BOOL sonix_usb_init(void)
 	if (sonix_psdbase) return TRUE;
 
 	sonix_timerbase = OpenLibrary("timer.library", 0);
-	sonix_psdbase = OpenLibrary("poseidon.library", 0);
+	if (!sonix_timerbase) return FALSE;
 
-	return sonix_psdbase ? TRUE : FALSE;
+	/* the proto headers of both libraries route through these, so they have
+	 * to name the bases OpenLibrary() handed out */
+
+	TimerBase = sonix_timerbase;
+
+	sonix_psdbase = OpenLibrary("poseidon.library", 0);
+	if (!sonix_psdbase)
+	{
+		TimerBase = NULL;
+		CloseLibrary(sonix_timerbase);
+		sonix_timerbase = NULL;
+		return FALSE;
+	}
+
+	PsdBase = sonix_psdbase;
+
+	return TRUE;
 }
 
 /*
@@ -126,12 +140,14 @@ void sonix_usb_exit(void)
 	{
 		CloseLibrary(sonix_psdbase);
 		sonix_psdbase = NULL;
+		PsdBase = NULL;
 	}
 
 	if (sonix_timerbase)
 	{
 		CloseLibrary(sonix_timerbase);
 		sonix_timerbase = NULL;
+		TimerBase = NULL;
 	}
 }
 
@@ -266,7 +282,11 @@ static BOOL alloc_bulk_pipe(struct SonixUsb *su, struct PsdInterface *pif)
 	struct List *altlist = NULL;
 	struct Node *alt;
 	struct PsdEndpoint *pep;
+	struct PsdPipe *pipe;
 	ULONG pktsize = 0;
+
+	su->su_BulkPipe      = NULL;
+	su->su_BulkPacketSize = 0;
 
 	psdGetAttrs(PGA_INTERFACE, pif, IFA_AlternateIfList, &altlist, TAG_END);
 
@@ -283,11 +303,11 @@ static BOOL alloc_bulk_pipe(struct SonixUsb *su, struct PsdInterface *pif)
 
 		if (!psdSetAltInterface(su->su_CtrlPipe, palt)) continue;
 
-		su->su_BulkPipe = (struct PsdPipe *)
-			psdAllocPipe(su->su_Device, su->su_MsgPort, pep);
+		pipe = (struct PsdPipe *)psdAllocPipe(su->su_Device, su->su_MsgPort, pep);
 
-		if (su->su_BulkPipe)
+		if (pipe)
 		{
+			su->su_BulkPipe = pipe;
 			su->su_BulkPacketSize = pktsize;
 			return TRUE;
 		}
@@ -371,16 +391,14 @@ APTR sonix_usb_open(UWORD vendor, UWORD product, STRPTR productname, ULONG bufle
 		return NULL;
 	}
 
-	if (!release_hook_ready)
-	{
-		init_hook(&release_hook, su);
-		release_hook_ready = TRUE;
-	}
-	else release_hook.h_Data = su;
+	/* one hook per handle: a single shared one would be overwritten by the
+	 * second camera and releasing the first device would flag the second */
+
+	init_hook(&su->su_ReleaseHook, su);
 
 	su->su_AppBinding = (struct PsdAppBinding *)
 		psdClaimAppBinding(ABA_Device,      pd,
-		                   ABA_ReleaseHook, &release_hook,
+		                   ABA_ReleaseHook, &su->su_ReleaseHook,
 		                   ABA_UserData,    su,
 		                   TAG_END);
 	if (!su->su_AppBinding)
@@ -464,13 +482,27 @@ LONG sonix_usb_control(APTR handle, ULONG requesttype, ULONG request,
 LONG sonix_usb_bulk_read(APTR handle, UBYTE *bytes, ULONG size)
 {
 	struct SonixUsb *su = (struct SonixUsb *)handle;
-	LONG result;
+	ULONG done = 0;
 
 	if (!su || !su->su_BulkPipe || su->su_DeviceGone) return -1;
 
-	result = psdDoPipe(su->su_BulkPipe, bytes, size);
+	/* One frame of a sn9c102 is 352 * 288 = 101376 bytes, roughly 1600
+	 * max packet transfers.  psdDoPipe() is a single transfer and is free to
+	 * come back short, so the frame has to be collected in a loop the way
+	 * libusb's usb_bulk_read() did it.  Giving up on a short read would hand
+	 * a truncated picture to the caller. */
 
-	return result < 0 ? -1 : result;
+	while (done < size)
+	{
+		LONG result = psdDoPipe(su->su_BulkPipe, bytes + done, size - done);
+
+		if (result < 0) return done ? (LONG)done : -1;
+		if (result == 0) break;      /* the camera has nothing more to say */
+
+		done += (ULONG)result;
+	}
+
+	return (LONG)done;
 }
 
 /*
@@ -482,6 +514,17 @@ ULONG sonix_usb_bulk_packetsize(APTR handle)
 	struct SonixUsb *su = (struct SonixUsb *)handle;
 
 	return su ? su->su_BulkPacketSize : 0;
+}
+
+/*
+ * sonix_usb_alive()
+ */
+
+BOOL sonix_usb_alive(APTR handle)
+{
+	struct SonixUsb *su = (struct SonixUsb *)handle;
+
+	return su ? (BOOL)(!su->su_DeviceGone) : FALSE;
 }
 
 /*
