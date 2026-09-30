@@ -13,6 +13,9 @@ sonix.stream/MMA_Sonix_Red
 sonix.stream/MMA_Sonix_Sensor
 sonix.stream/MMA_Sonix_SensorName
 sonix.stream/MMA_Sonix_VendorID
+sonix.stream/MMA_StreamPosBytes
+sonix.stream/MMA_StreamPosFrames
+sonix.stream/MMA_StreamPosTime
 sonix.stream/MMM_Peek
 sonix.stream/MMM_Pull
 sonix.stream/MMM_Restore
@@ -50,6 +53,22 @@ sonix.stream/MMM_Restore
    until the next frame has been read, and it only fails when the camera is
    unplugged or stops answering, which comes back as MMERR_IO_ERROR.
 
+   A live camera has no length and cannot be seeked, so MMA_StreamLength is
+   0, MMA_StreamSeekable is FALSE and MMM_Seek is refused with
+   MMERR_NOT_SEEKABLE. The position is a running total however:
+   MMA_StreamPosBytes, MMA_StreamPosFrames and MMA_StreamPosTime count what
+   has been handed out so far and only ever move forward, the frame in the
+   middle of being served included. They are meant to be polled, and a
+   pipeline which reports a position that stands still while pictures are
+   coming out of it looks like a stalled stream to anything above.
+
+   The class specific attributes are answered on the port as well, so an
+   application can read the sensor name with MMM_GetPort without going
+   through OM_GET, and set the format with MMM_SetPort without going through
+   OM_SET. Both take the same values and have the same restrictions as the
+   object they forward to, including the refusal of a format change once the
+   camera has been claimed.
+
    A buffer and a length are required: a NULL buffer, a port other than 0 or
    a length which is not positive is refused with MMERR_WRONG_ARGUMENTS, on
    MMM_Pull and on MMM_Peek alike.
@@ -83,6 +102,14 @@ sonix.stream/MMM_Restore
  HISTORY
    1.0 (29.09.2026)
    - Initial revision.
+   - MMA_StreamPosBytes, MMA_StreamPosFrames and MMA_StreamPosTime report a
+     running total instead of 0, and MMA_StreamPosFrames is no longer the
+     index of the frame in the buffer.
+   - SNXF_GRAY8 averages the Bayer pattern into one luminance per 2x2 cell
+     instead of passing the mosaic through as grey.
+   - A format change is refused from MMM_Setup on, not from the first pull
+     on, so it can no longer reallocate the frame buffer underneath a stream
+     header which is being read.
 
 sonix.stream/MMA_Sonix_Blue
 
@@ -265,6 +292,58 @@ sonix.stream/MMM_Restore
    travels in the SnxStreamHeader, and a sonix.demuxer behind the object
    republishes it as its own MMA_Sonix_VendorID.
 
+sonix.stream/MMA_StreamPosBytes
+
+ NAME
+   MMA_StreamPosBytes (V1) [..G], UQUAD
+
+ FUNCTION
+   Bytes of the stream handed out by MMM_Pull so far, the 32 bytes of the
+   stream header included. It is a running total and only moves forward, and
+   the frame which is being served right now counts as handed out up to the
+   cursor, so the number never falls back to zero when a frame has been
+   served to the end and the next pull has to wait for the camera.
+
+ NOTES
+   A live camera has no length, so MMA_StreamLength is 0 and this is not an
+   offset into it that can be seeked to; MMM_Seek is refused with
+   MMERR_NOT_SEEKABLE. The value is meant to be polled, to show how much of
+   a stream a recording has taken in.
+
+sonix.stream/MMA_StreamPosFrames
+
+ NAME
+   MMA_StreamPosFrames (V1) [..G], UQUAD
+
+ FUNCTION
+   Frames of the stream handed out by MMM_Pull in full so far. A frame
+   counts once it has been served to the end, so a pull which asks for less
+   than a frame does not move it, and the frame in the middle of being
+   served is not counted yet.
+
+ NOTES
+   This is not the index of the frame which is in the buffer, which is what
+   the frame header of the stream carries in fh_Index and which a demuxer
+   republishes as its own MMA_Sonix_FrameIndex. The index of a stream starts
+   again at 0 whenever the source is set up, this count does not.
+
+sonix.stream/MMA_StreamPosTime
+
+ NAME
+   MMA_StreamPosTime (V1) [..G], UQUAD
+
+ FUNCTION
+   Microseconds since the camera was claimed, measured at the moment the
+   last frame was served to the end, so it is the length of the stream up
+   to the last whole frame and not the position inside the frame in flight.
+   It is 0 as long as no frame has been served in full.
+
+ NOTES
+   A live camera has no length, so this is not a position which can be
+   seeked to; MMM_Seek is refused with MMERR_NOT_SEEKABLE. Together with
+   MMA_StreamPosFrames it gives the rate the camera is really running at,
+   which is the same number a sonix.demuxer behind the object reports as
+   MMA_Sonix_FrameTime.
 sonix.stream/MMM_Peek
 
  NAME

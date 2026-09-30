@@ -1,0 +1,196 @@
+TABLE OF CONTENTS
+
+sonix.demuxer/--background--
+sonix.demuxer/MMA_Sonix_FrameIndex
+sonix.demuxer/MMA_Sonix_FrameTime
+sonix.demuxer/MMA_Sonix_ProductID
+sonix.demuxer/MMA_Sonix_Sensor
+sonix.demuxer/MMA_Sonix_VendorID
+sonix.demuxer/MMM_Pull
+sonix.demuxer/--background--
+
+ DESCRIPTION
+   A Reggae demultiplexer for the framed byte stream sonix.stream produces.
+   It strips the framing described in sonixwire.h, one SnxStreamHeader
+   followed by any number of SnxFrameHeader plus picture pairs, and hands
+   the pictures on as MMF_VIDEO_RGB24 or MMF_VIDEO_GRAY8.
+
+   Input port 0 carries MMF_STREAM and is the sonix.stream object in front
+   of it, output port 1 carries the video. The geometry and the pixel format
+   are not configured by the application: they arrive in the stream header
+   and are published on port 1 as soon as they have been read, which happens
+   on the first MMM_Pull on port 1 or on an MMM_Setup on port 0, whichever
+   comes first. An application which wants to size its buffers beforehand
+   therefore has to set the pipeline up before it can ask for the width.
+
+   The class is a demuxer for a live source, so it never reports
+   MMERR_END_OF_DATA: the stream only ends when the camera is unplugged or
+   stops answering, which comes back as MMERR_IO_ERROR. It is not seekable,
+   and MMA_Video_FrameCount is 0 because a live stream has no count.
+
+   A stream which is not in step cannot be resynchronised. A source behind
+   it which is not a sonix.stream, a header which does not describe a Sonix
+   stream, a frame size which does not match the header, and a source which
+   stops in the middle of a header or a frame are all refused with
+   MMERR_WRONG_DATA or MMERR_IO_ERROR, and the class then stays refused:
+   every later pull returns 0 and reports the error of the first failure.
+   Reading on after that would take whatever comes next for a frame header,
+   so the object does not pretend a picture is there.
+
+   A source which has not been set up yet is a different thing and is not a
+   failure: nothing comes back from it, the pull is refused without an error
+   of its own, and the next one reads the header. The same is true of a
+   frame buffer which could not be allocated, because the stream is still in
+   step there and a later pull may get the frame out of it.
+
+   The frame rate is measured rather than taken from the stream header,
+   which is a hint at best and is zero on a source which has just been
+   opened. It is derived from the fh_Timestamp of the frames, and nothing is
+   known until two of them have been read, which is reported as a rate of 0
+   rather than as a made up one.
+
+ NEW ATTRIBUTES
+   Attributes applicability:
+     I - may be set at creation time.
+     S - may be set on an existing object.
+     G - may be get from an object.
+     P - may be set for an object's port.
+     Q - may be queried from an object's port.
+
+   MMA_Sonix_VendorID   (V1)     [..G], UWORD
+   MMA_Sonix_ProductID  (V1)     [..G], UWORD
+   MMA_Sonix_Sensor     (V1)     [..G], ULONG
+   MMA_Sonix_FrameIndex (V1)     [..G], ULONG
+   MMA_Sonix_FrameTime  (V1)     [..G], ULONG
+
+ NEW METHODS
+   MMM_Pull(port, buffer, length)  (V1)
+sonix.demuxer/MMA_Sonix_FrameIndex
+
+ NAME
+   MMA_Sonix_FrameIndex (V1) [..G], ULONG
+
+ FUNCTION
+   Index of the last frame which has been read off the input, taken from
+   fh_Index of its frame header, and 0 until the first one has been. The
+   source counts from 0 every time it is set up, so this counts frames
+   within one run and is not a total over the lifetime of the camera.
+
+ NOTES
+   This is the index of the frame, not the number of frames which have been
+   served. The sonix.stream object in front counts those itself and reports
+   them as its own MMA_StreamPosFrames.
+
+sonix.demuxer/MMA_Sonix_FrameTime
+
+ NAME
+   MMA_Sonix_FrameTime (V1) [..G], ULONG
+
+ FUNCTION
+   Measured time between two frames in microseconds, and 0 until two frames
+   have been read. It is a running average over the frames read so far, so a
+   camera which slips a frame does not move it much. A timestamp which went
+   backwards or jumped by more than two seconds is not a frame time and is
+   left out of the average.
+
+ NOTES
+   Together with MMA_Video_FpsNumerator and MMA_Video_FpsDenominator this is
+   the rate the camera is really running at. The nominal frame time in the
+   stream header is not used: it is a hint, and it is zero on a source which
+   has only just been opened.
+
+sonix.demuxer/MMA_Sonix_ProductID
+
+ NAME
+   MMA_Sonix_ProductID (V1) [..G], UWORD
+
+ FUNCTION
+   USB product id of the camera which was claimed, taken from the stream
+   header, and 0 before the header has been read. It is read only, it has no
+   meaning as a selector here: the camera is picked by the sonix.stream
+   object in front of this one.
+
+ NOTES
+   The same number is set on the sonix.stream object as a selector, where it
+   defaults to 0 and matches a camera of any product. Which camera answered
+   is only known once a stream header has been read.
+
+sonix.demuxer/MMA_Sonix_Sensor
+
+ NAME
+   MMA_Sonix_Sensor (V1) [..G], ULONG
+
+ FUNCTION
+   Sensor found behind the sn9c102 controller of the camera which was
+   claimed, one of the SNXS_* values of sonixwire.h: SNXS_PAS106B,
+   SNXS_TAS5110C1B or SNXS_PAC207. It is taken from the stream header, so it
+   is SNXS_NONE until the header has been read. The sensor is probed over
+   I2C by the sonix.stream object, which refuses a camera with neither a
+   PAS106B nor a TAS5110C1B on MMM_Setup with MMERR_NO_STREAM_CLASS.
+
+ NOTES
+   The name of the sensor is not republished, it is a string and would have
+   to be translated. sonix.stream answers MMA_Sonix_SensorName with a plain
+   ASCII name, which is readable on the object in front.
+
+sonix.demuxer/MMA_Sonix_VendorID
+
+ NAME
+   MMA_Sonix_VendorID (V1) [..G], UWORD
+
+ FUNCTION
+   USB vendor id of the camera which was claimed, taken from the stream
+   header, and 0 before the header has been read. It is read only, it has no
+   meaning as a selector here: the camera is picked by the sonix.stream
+   object in front of this one.
+
+ NOTES
+   The same number is set on the sonix.stream object as a selector, where it
+   defaults to 0 and matches a camera of any vendor. Which camera answered
+   is only known once a stream header has been read.
+
+sonix.demuxer/MMM_Pull
+
+ NAME
+   MMM_Pull -- Pulls picture data from a sonix.stream source. (V1)
+
+ SYNOPSIS
+   ULONG DoMethod(Object *obj, MMM_Pull, ULONG port, APTR buffer, ULONG
+   length);
+
+ FUNCTION
+   Port 1 hands out the picture of the frame which is in the buffer, and
+   waits for the camera when the buffer is empty, which is where a live
+   source spends its time. A pull which asks for more than is left of the
+   frame returns the rest of it and a short count; the next call reads the
+   next frame. The pictures are handed over exactly as they came out of the
+   buffer, no scaling and no colour conversion happen here.
+
+   Port 0 is a passthrough to the source and is what the class uses itself
+   to read the stream header and the frames. An application asking for it
+   gets the raw framed bytes, which is what the recognition code of this
+   class does to find the stream header; the class then restores what it
+   peeked.
+
+   The class implements no seeking, and it never reports MMERR_END_OF_DATA
+   for a live source. It only fails when the camera is unplugged or stops
+   answering, which comes back as MMERR_IO_ERROR.
+
+   A stream which has lost its framing stays refused: a NULL buffer, a
+   length which is not positive or a port other than 0 or 1 is refused with
+   MMERR_WRONG_ARGUMENTS, and a pull on a class which has already given up
+   on the stream returns 0 with the error of that first failure.
+
+ INPUTS
+   obj - object to perform method on.
+   port - number of port, 0 for the raw stream or 1 for the pictures.
+   buffer - destination buffer for the data.
+   length - amount of data to be pulled in *bytes*.
+
+ RESULT
+   Number of bytes pulled, secondary error information via MMA_ErrorCode.
+
+ SEE ALSO
+   multimedia.class/MMA_ErrorCode
+
+
